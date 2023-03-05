@@ -13,6 +13,7 @@ ARayEmitter::ARayEmitter()
 	PrimaryActorTick.bCanEverTick = true;
 	fRoot = CreateDefaultSubobject<USceneComponent>("Root");
 	SetRootComponent(fRoot);
+
 	fSplineComponent = CreateDefaultSubobject<USplineComponent>("Spline");
 	fSplineComponent->AttachToComponent(fRoot, FAttachmentTransformRules::KeepRelativeTransform);
 
@@ -23,6 +24,8 @@ ARayEmitter::ARayEmitter()
 
 void ARayEmitter::AllocateSplineMesh()
 {
+	if (!fMesh || !fMaterial)
+		return;
 	for (int32 i = 0; i < fReflectCount; i++)
 	{
 		FString name = "StaticMeshComponent" + i;
@@ -39,6 +42,25 @@ void ARayEmitter::AllocateSplineMesh()
 	}
 }
 
+void ARayEmitter::SetUpParticleSystem()
+{
+	if (!fParticleSystem)
+		return;
+	for (int32 i = 0; i < fReflectCount; i++)
+	{
+		FString name = "ParticleSystem" + i;
+		UNiagaraComponent* oneParticleSystem = NewObject<UNiagaraComponent>(this, UNiagaraComponent::StaticClass(), FName(name));
+		oneParticleSystem->SetAsset(fParticleSystem);
+		oneParticleSystem->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		oneParticleSystem->SetMobility(EComponentMobility::Movable);
+		oneParticleSystem->RegisterComponentWithWorld(GetWorld());
+		oneParticleSystem->AttachToComponent(fSplineComponent, FAttachmentTransformRules::KeepRelativeTransform);
+		oneParticleSystem->SetCastShadow(false);
+		oneParticleSystem->SetVectorParameter("User.BeamEnd", FVector(0,0,0));
+		fParticleCache.Push(oneParticleSystem);
+	}
+}
+
 // Called when the game starts or when spawned
 void ARayEmitter::BeginPlay()
 {
@@ -51,8 +73,18 @@ void ARayEmitter::BeginPlay()
 		fSplineComponent->SetDrawDebug(true);
 		GEngine->Exec(GetWorld(), TEXT("show Splines"));
 	}
-
-	AllocateSplineMesh();
+	switch (fRenderType)
+	{
+	case RenderType::SplineMesh:
+		AllocateSplineMesh();
+		break;
+	case RenderType::NiagaraVFX:
+		SetUpParticleSystem();
+		break;
+	default:
+		break;
+	}
+	
 }
 
 void ARayEmitter::FaceMouse()
@@ -144,6 +176,27 @@ void ARayEmitter::UpdateSpline(TArray<FVector>& aListOfReflectionLocation, TArra
 	}
 }
 
+void ARayEmitter::UpdateParticleSystem(TArray<FVector>& aListOfReflectionLocation, TArray<FVector>& aListOfReflectionRotation)
+{
+	for (int32 particleCount = 0; particleCount < fParticleCache.Num(); particleCount++)
+	{
+		if (particleCount < aListOfReflectionLocation.Num() -1)
+		{
+			FVector startLocation = aListOfReflectionLocation[particleCount];
+			FVector endLocation = aListOfReflectionLocation[particleCount + 1];
+			FVector relativeEndLocation = endLocation - startLocation;
+
+			fParticleCache[particleCount]->SetWorldLocation(startLocation);
+			fParticleCache[particleCount]->SetVectorParameter("User.BeamEnd", endLocation);
+			fParticleCache[particleCount]->SetVisibility(true);
+		}
+		else 
+		{
+			fParticleCache[particleCount]->SetVisibility(false);
+		}
+	}
+}
+
 // Called every frame
 void ARayEmitter::Tick(float DeltaTime)
 {
@@ -156,6 +209,16 @@ void ARayEmitter::Tick(float DeltaTime)
 	TArray<FVector> listOfReflectionRotation;
 
 	ComputeReflection(listOfReflectionLocation, listOfReflectionRotation);
-
-	UpdateSpline(listOfReflectionLocation, listOfReflectionRotation);
+	switch (fRenderType)
+	{
+	case RenderType::SplineMesh:
+		UpdateSpline(listOfReflectionLocation, listOfReflectionRotation);
+		break;
+	case RenderType::NiagaraVFX:
+		UpdateParticleSystem(listOfReflectionLocation, listOfReflectionRotation);
+		break;
+	default:
+		break;
+	}
+	
 }
